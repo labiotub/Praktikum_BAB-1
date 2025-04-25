@@ -5,76 +5,117 @@
 #endif
 
 #include <Firebase_ESP_Client.h>
-//Provide the token generation process info.
 #include "addons/TokenHelper.h"
-//Provide the RTDB payload printing info and other helper functions.
 #include "addons/RTDBHelper.h"
+#include <Arduino.h>
+#include <AESLib.h>
+#include "base64.h"  // Pastikan pustaka Base64 yang benar
 
-// Insert your network credentials
-#define WIFI_SSID "Lab_IoT"
-#define WIFI_PASSWORD "L@bi0t63"
+// ====== KONFIGURASI WIFI & FIREBASE ======
+#define WIFI_SSID "SSID"
+#define WIFI_PASSWORD "PASSWORD"
+#define API_KEY "API KEY"
+#define DATABASE_URL "FIREBASE URL"
 
-// Insert Firebase project API Key
-#define API_KEY "AIzaSyAViPIS3Fu7MQMaULbV00_SFf0iMNfpXTE"
-
-// Insert RTDB URLefine the RTDB URL */
-#define DATABASE_URL "https://prakiot-b9a26-default-rtdb.firebaseio.com/" 
-
-//Define Firebase Data object
 FirebaseData fbdo;
-
 FirebaseAuth auth;
 FirebaseConfig config;
+
 unsigned long sendDataPrevMillis = 0;
 unsigned long timer = 0;
 int count = 0;
 bool signupOK = false;
 
-void setup() {
-  Serial.begin(115200);
+AESLib aesLib;
 
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.print(".");
-    delay(300);
-  }
-  Serial.println();
-  Serial.print("Connected with IP: ");
-  Serial.println(WiFi.localIP());
-  Serial.println();
+// ====== KUNCI AES-128 ======
+const byte key[16] = { 
+    '1', '2', '3', '4', '5', '6', '7', '8', 
+    '9', '0', '1', '2', '3', '4', '5', '6' 
+}; // 16-byte key untuk AES-128
 
-  Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
+byte iv[16] = {0}; // IV tidak digunakan untuk mode ECB, tetapi tetap harus direset
 
-
-  /* Assign the api key (required) */
-  config.api_key = API_KEY;
-
-  /* Assign the RTDB URL (required) */
-  config.database_url = DATABASE_URL;
-
-  /* Sign up */
-  if (Firebase.signUp(&config, &auth, "", "")){
-    Serial.println("ok");
-    signupOK = true;
-  }
-  else{
-    Serial.printf("%s\n", config.signer.signupError.message.c_str());
-  }
-
-  /* Assign the callback function for the long running token generation task */
-  config.token_status_callback = tokenStatusCallback; //see addons/TokenHelper.h
-  
-  Firebase.begin(&config, &auth);
-  Firebase.reconnectWiFi(true);
-  
-
+// ====== FUNGSI RESET BUFFER & IV ======
+void resetBuffer(byte* buffer, int length) {
+    memset(buffer, 0, length);
 }
 
-void loop() {
-   // Firebase.ready() should be called repeatedly to handle authentication tasks.
+void resetIV() {
+    memset(iv, 0, sizeof(iv)); // Reset IV ke 0 untuk setiap iterasi
+}
 
+// ====== FUNGSI ENKRIPSI AES-128 ECB ======
+String encryptAES(String plainText) {
+    int plainLen = plainText.length();
+    int paddedLen = ((plainLen + 15) / 16) * 16; // Pastikan ukuran kelipatan 16 byte
+
+    byte plain[paddedLen];
+    byte encrypted[paddedLen];
+    char base64_output[paddedLen * 2]; // Buffer untuk hasil Base64
+
+    resetBuffer(plain, paddedLen);
+    resetBuffer(encrypted, paddedLen);
+    resetIV();  // Pastikan IV selalu di-reset
+
+    memcpy(plain, plainText.c_str(), plainLen);
+    aesLib.encrypt(plain, paddedLen, encrypted, key, 128, iv);
+
+    base64_encode(base64_output, (char*)encrypted, paddedLen);
+    return String(base64_output);
+}
+
+// ====== FUNGSI DEKRIPSI AES-128 ECB ======
+String decryptAES(String encryptedText) {
+    int encryptedLen = encryptedText.length();
+
+    byte decodedText[encryptedLen];
+    byte decrypted[encryptedLen];
+
+    resetBuffer(decodedText, encryptedLen);
+    resetBuffer(decrypted, encryptedLen);
+    resetIV();  // Pastikan IV selalu di-reset
+
+    int decodedLen = base64_decode((char*)decodedText, encryptedText.c_str(), encryptedLen);
+    aesLib.decrypt(decodedText, decodedLen, decrypted, key, 128, iv);
+
+    return String((char*)decrypted);
+}
+
+// ====== SETUP ESP & FIREBASE ======
+void setup() {
+    Serial.begin(115200);
+    Serial.println("\nMasukkan teks yang ingin dienkripsi:");
+
+    // Koneksi WiFi
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("Connecting to Wi-Fi");
+    while (WiFi.status() != WL_CONNECTED) {
+        Serial.print(".");
+        delay(300);
+    }
+    Serial.println("\nConnected with IP: " + WiFi.localIP().toString());
+
+    Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
+
+    // Konfigurasi Firebase
+    config.api_key = API_KEY;
+    config.database_url = DATABASE_URL;
+    config.token_status_callback = tokenStatusCallback;
+
+    if (Firebase.signUp(&config, &auth, "", "")) {
+        Serial.println("Firebase SignUp OK");
+        signupOK = true;
+    } else {
+        Serial.printf("Firebase SignUp Failed: %s\n", config.signer.signupError.message.c_str());
+    }
+
+    Firebase.begin(&config, &auth);
+    Firebase.reconnectWiFi(true);
+}
+
+// ====== LOOP UTAMA ======
+void loop() {
   if (Firebase.ready() && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0))
   {
     sendDataPrevMillis = millis();
@@ -122,5 +163,43 @@ void loop() {
 
     Serial.println();
     count++;
+    delay (2000);
   }
+    if (Firebase.ready() && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0)) {
+        sendDataPrevMillis = millis();
+
+        // Membaca teks terenkripsi dari Firebase (/test/decrypted)
+        if (Firebase.RTDB.getString(&fbdo, "/test/decrypted")) {
+            String encryptedText = fbdo.to<String>();
+            Serial.println("\n📥 Data terenkripsi dari Firebase: " + encryptedText);
+
+            // Dekripsi
+            String decryptedText = decryptAES(encryptedText);
+            Serial.println("🔓 Hasil Dekripsi: " + decryptedText);
+        } else {
+            Serial.println("❌ Gagal membaca /test/decrypted dari Firebase: " + fbdo.errorReason());
+        }
+    }
+
+    // Membaca input dari Serial Monitor untuk dienkripsi & dikirim ke Firebase
+    if (Serial.available()) {
+        String text = Serial.readStringUntil('\n');
+        text.trim();
+
+        if (text.length() > 0) {
+            Serial.println("\n📤 Plaintext: " + text);
+            String encryptedText = encryptAES(text);
+            Serial.println("🔐 Encrypted (Base64): " + encryptedText);
+
+            // Mengirim teks terenkripsi ke Firebase (/test/encrypted_string)
+            if (Firebase.RTDB.setString(&fbdo, "/test/encrypted_string", encryptedText)) {
+                Serial.println("✅ Data terenkripsi berhasil dikirim ke Firebase");
+            } else {
+                Serial.println("❌ Gagal mengirim data ke Firebase: " + fbdo.errorReason());
+            }
+
+            Serial.println("\nMasukkan teks lagi untuk dienkripsi:");
+            delay(2000);
+        }
+    }
 }
