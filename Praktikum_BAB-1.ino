@@ -27,9 +27,13 @@ void setup() {
 
     sensors.begin();
 
-    Serial.println("Sistem IoT Lokal Siap");
+    Serial.println("====================================");
+    Serial.println("   SISTEM IoT LOKAL - BAB 1");
+    Serial.println("====================================");
     Serial.println("Perintah:");
-    Serial.println("SERVO <0-180>");
+    Serial.println("Ketik: SERVO <0-180>");
+    Serial.println("Contoh: SERVO 90");
+    Serial.println("====================================");
 }
 
 void loop() {
@@ -45,38 +49,55 @@ void loop() {
     digitalWrite(trigPin, LOW);
 
     duration = pulseIn(echoPin, HIGH);
-    jarak = duration * 0.034 / 2;
+
+    if (duration == 0) {
+        Serial.println("[ERROR] Sensor jarak tidak terbaca!");
+        jarak = 0;
+    } else {
+        jarak = duration * 0.034 / 2;
+    }
 
     // ===== BACA SUHU =====
     sensors.requestTemperatures();
     float suhu = sensors.getTempCByIndex(0);
 
-    // ===== TAMPILKAN =====
-    Serial.print("Jarak: ");
+    // ===== TAMPILKAN DATA =====
+    Serial.println("\n--------- DATA SENSOR ---------");
+
+    Serial.print("Jarak : ");
     Serial.print(jarak);
     Serial.println(" cm");
 
-    Serial.print("Suhu: ");
+    Serial.print("Suhu  : ");
     Serial.print(suhu);
     Serial.println(" °C");
+
+    Serial.println("-------------------------------");
 
     // ===== INPUT SERIAL =====
     if (Serial.available()) {
         String input = Serial.readStringUntil('\n');
         input.trim();
 
+        Serial.print("\n[INPUT] ");
+        Serial.println(input);
+
         if (input.startsWith("SERVO")) {
             int sudut = input.substring(6).toInt();
 
             if (sudut >= 0 && sudut <= 180) {
                 myServo.write(sudut);
-                Serial.print("Servo ke: ");
-                Serial.println(sudut);
+
+                Serial.print("[OK] Servo bergerak ke: ");
+                Serial.print(sudut);
+                Serial.println(" derajat");
             } else {
-                Serial.println("Sudut tidak valid (0-180)");
+                Serial.println("[ERROR] Sudut tidak valid (0-180)");
             }
+        } else {
+            Serial.println("[ERROR] Format salah! Gunakan: SERVO <0-180>");
         }
     }
 
-    delay(1000);
+    delay(2000);
 }
